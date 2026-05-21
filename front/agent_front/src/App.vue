@@ -82,6 +82,11 @@ const composerRef = ref<HTMLTextAreaElement | null>(null)
 const progressLogs = ref<string[]>([])
 const conversations = ref<StoredConversation[]>([])
 const currentLoading = computed(() => Boolean(runningThreads.value[threadId.value]))
+const mobileSidebarOpen = ref(false)
+
+const closeMobileSidebar = () => {
+  mobileSidebarOpen.value = false
+}
 
 const starterPrompts = [
   {
@@ -294,6 +299,7 @@ const switchConversation = async (conversation: StoredConversation) => {
   if (conversation.threadId === threadId.value) return
   upsertCurrentConversation()
   await applyConversation(conversation)
+  closeMobileSidebar()
 }
 
 const openLatestConversationOrReset = () => {
@@ -431,6 +437,7 @@ const restoreSession = async () => {
 const logout = async () => {
   const token = authToken.value
   clearAuth()
+  closeMobileSidebar()
   if (!token) return
   try {
     await fetch('/api/v1/auth/logout', {
@@ -453,6 +460,7 @@ const createNewChat = () => {
   progressLogs.value = []
   errorMessage.value = ''
   query.value = ''
+  closeMobileSidebar()
 }
 
 const onKnowledgeFileChange = (event: Event) => {
@@ -496,6 +504,7 @@ const uploadKnowledgeFile = async () => {
 const usePrompt = async (prompt: string) => {
   query.value = prompt
   errorMessage.value = ''
+  closeMobileSidebar()
   await nextTick()
   composerRef.value?.focus()
 }
@@ -694,8 +703,11 @@ onMounted(() => {
     </section>
   </div>
 
-  <div v-else class="chat-shell">
-    <aside class="chat-sidebar">
+  <div v-else class="chat-shell" :class="{ 'sidebar-open': mobileSidebarOpen }">
+    <button class="mobile-menu-btn" type="button" @click="mobileSidebarOpen = true">菜单</button>
+    <div v-if="mobileSidebarOpen" class="mobile-sidebar-backdrop" @click="closeMobileSidebar"></div>
+    <aside class="chat-sidebar" @click.stop>
+      <button class="mobile-sidebar-close" type="button" @click="closeMobileSidebar">×</button>
       <div class="sidebar-brand">
         <p class="brand-badge">AI Copilot</p>
         <h1>DeepResearch</h1>
