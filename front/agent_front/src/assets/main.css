@@ -204,6 +204,80 @@ textarea {
   justify-content: flex-end;
 }
 
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  max-height: 190px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.conversation-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #d7e1f8;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 9px 8px 9px 10px;
+  color: #2f4474;
+  cursor: pointer;
+}
+
+.conversation-item:hover,
+.conversation-item.active {
+  border-color: #9db7f2;
+  background: #f2f6ff;
+}
+
+.conversation-item.running {
+  border-color: #89c8b5;
+  background: #f2fbf8;
+}
+
+.conversation-item strong {
+  display: block;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.conversation-item span {
+  display: block;
+  margin-top: 2px;
+  color: #7388b2;
+  font-size: 11px;
+}
+
+.conversation-delete {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #7b8daf;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.conversation-delete:hover {
+  background: #e6edff;
+  color: #3458b8;
+}
+
+.empty-history {
+  margin: 0;
+  color: #7388b2;
+  font-size: 12px;
+}
+
 .user-card {
   display: flex;
   align-items: center;
@@ -281,6 +355,68 @@ textarea {
 .quick-entry-btn:hover {
   border-color: #a9bff6;
   background: #f7f9ff;
+}
+
+.kb-panel {
+  display: grid;
+  gap: 9px;
+  border: 1px solid #d9e5fb;
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.kb-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #43577f;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.switch-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: #315ecb;
+}
+
+.file-input {
+  width: 100%;
+  min-width: 0;
+  color: #40557e;
+  font-size: 12px;
+}
+
+.upload-btn {
+  border: none;
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: #eef4ff;
+  color: #3458b8;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.upload-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.upload-status {
+  margin: 0;
+  color: #60749d;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .settings-group {

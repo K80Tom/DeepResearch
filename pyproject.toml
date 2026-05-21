@@ -19,6 +19,7 @@ dependencies = [
   "redis",
   "python-dotenv",
   "pydantic-settings",
+  "pypdf",
   "typing-extensions"
 ]
 

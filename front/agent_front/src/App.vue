@@ -14,6 +14,16 @@ type ChatMessage = {
   content: string
 }
 
+type StoredConversation = {
+  threadId: string
+  title: string
+  updatedAt: number
+  messages: ChatMessage[]
+  useLocalKb: boolean
+  uploadStatus: string
+  running?: boolean
+}
+
 type AuthUser = {
   id: string
   username: string
@@ -30,6 +40,7 @@ type AuthResponse = {
 const TOKEN_KEY = 'deepresearch_auth_token'
 const USER_KEY = 'deepresearch_auth_user'
 const THREAD_KEY = 'deepresearch_thread_id'
+const CONVERSATION_KEY_PREFIX = 'deepresearch_conversations'
 
 const createThreadId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -58,13 +69,19 @@ const tenantId = computed(() => currentUser.value?.tenant_id || 'default_tenant'
 const userId = computed(() => currentUser.value?.id || '')
 const displayName = computed(() => currentUser.value?.display_name || currentUser.value?.username || '用户')
 const isAuthenticated = computed(() => Boolean(authToken.value && currentUser.value))
+const useLocalKb = ref(false)
+const selectedKnowledgeFile = ref<File | null>(null)
+const uploadingKnowledge = ref(false)
+const uploadStatus = ref('')
 
 const query = ref('')
-const loading = ref(false)
+const runningThreads = ref<Record<string, boolean>>({})
 const errorMessage = ref('')
 const messageListRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const progressLogs = ref<string[]>([])
+const conversations = ref<StoredConversation[]>([])
+const currentLoading = computed(() => Boolean(runningThreads.value[threadId.value]))
 
 const starterPrompts = [
   {
@@ -82,7 +99,7 @@ const starterPrompts = [
 ]
 
 const welcomeText = () =>
-  `你好，${displayName.value}。你可以直接提问，我会根据当前会话 ${threadId.value} 做记忆隔离。`
+  `你好，${displayName.value}。我是深度研究型智能体，可以帮你做资料检索、文档分析和结构化报告。`
 
 const messages = ref<ChatMessage[]>([
   {
@@ -168,6 +185,156 @@ const scrollToBottom = async () => {
   }
 }
 
+const conversationStorageKey = () => `${CONVERSATION_KEY_PREFIX}_${userId.value || 'anonymous'}`
+
+const isThreadRunning = (targetThreadId: string) => Boolean(runningThreads.value[targetThreadId])
+
+const setThreadRunning = (targetThreadId: string, running: boolean) => {
+  const next = { ...runningThreads.value }
+  if (running) {
+    next[targetThreadId] = true
+  } else {
+    delete next[targetThreadId]
+  }
+  runningThreads.value = next
+}
+
+const saveConversations = () => {
+  if (!userId.value) return
+  localStorage.setItem(conversationStorageKey(), JSON.stringify(conversations.value.slice(0, 30)))
+}
+
+const loadConversations = () => {
+  if (!userId.value) {
+    conversations.value = []
+    return
+  }
+  try {
+    const raw = localStorage.getItem(conversationStorageKey())
+    const parsed = raw ? (JSON.parse(raw) as StoredConversation[]) : []
+    conversations.value = parsed
+      .filter((item) => item.threadId && Array.isArray(item.messages))
+      .map((item) => ({
+        ...item,
+        running: false,
+        messages: item.messages.filter((message) => message.role !== 'status'),
+      }))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 30)
+  } catch {
+    conversations.value = []
+  }
+}
+
+const titleFromMessages = (items: ChatMessage[]) => {
+  const firstUserMessage = items.find((item) => item.role === 'user')?.content.trim()
+  if (firstUserMessage) {
+    return firstUserMessage.length > 28 ? `${firstUserMessage.slice(0, 28)}...` : firstUserMessage
+  }
+  return '新会话'
+}
+
+const upsertCurrentConversation = () => {
+  if (!isAuthenticated.value || !threadId.value) return
+  const cleanMessages = isThreadRunning(threadId.value) ? messages.value : messages.value.filter((item) => item.role !== 'status')
+  if (!cleanMessages.length) return
+  const item: StoredConversation = {
+    threadId: threadId.value,
+    title: titleFromMessages(cleanMessages),
+    updatedAt: Date.now(),
+    messages: cleanMessages,
+    useLocalKb: useLocalKb.value,
+    uploadStatus: uploadStatus.value,
+    running: isThreadRunning(threadId.value),
+  }
+  conversations.value = [item, ...conversations.value.filter((conv) => conv.threadId !== item.threadId)].slice(0, 30)
+  saveConversations()
+}
+
+const updateConversationMessages = (
+  targetThreadId: string,
+  updater: (items: ChatMessage[]) => ChatMessage[],
+  options: Partial<Pick<StoredConversation, 'useLocalKb' | 'uploadStatus' | 'running'>> = {},
+) => {
+  const existing = conversations.value.find((item) => item.threadId === targetThreadId)
+  const baseMessages = targetThreadId === threadId.value ? messages.value : existing?.messages || []
+  const nextMessages = updater([...baseMessages])
+  const item: StoredConversation = {
+    threadId: targetThreadId,
+    title: titleFromMessages(nextMessages.filter((message) => message.role !== 'status')),
+    updatedAt: Date.now(),
+    messages: nextMessages,
+    useLocalKb: options.useLocalKb ?? existing?.useLocalKb ?? (targetThreadId === threadId.value ? useLocalKb.value : false),
+    uploadStatus: options.uploadStatus ?? existing?.uploadStatus ?? (targetThreadId === threadId.value ? uploadStatus.value : ''),
+    running: options.running ?? isThreadRunning(targetThreadId),
+  }
+  conversations.value = [item, ...conversations.value.filter((conv) => conv.threadId !== targetThreadId)].slice(0, 30)
+  saveConversations()
+  if (targetThreadId === threadId.value) {
+    messages.value = nextMessages
+  }
+}
+
+const applyConversation = async (conversation: StoredConversation) => {
+  threadId.value = conversation.threadId
+  localStorage.setItem(THREAD_KEY, conversation.threadId)
+  messages.value = conversation.messages.length
+    ? conversation.messages
+    : [{ id: `m-${Date.now()}`, role: 'assistant', content: welcomeText() }]
+  useLocalKb.value = conversation.useLocalKb
+  uploadStatus.value = conversation.uploadStatus || ''
+  selectedKnowledgeFile.value = null
+  progressLogs.value = []
+  errorMessage.value = ''
+  query.value = ''
+  await scrollToBottom()
+}
+
+const switchConversation = async (conversation: StoredConversation) => {
+  if (conversation.threadId === threadId.value) return
+  upsertCurrentConversation()
+  await applyConversation(conversation)
+}
+
+const openLatestConversationOrReset = () => {
+  loadConversations()
+  const current = conversations.value.find((item) => item.threadId === threadId.value) || conversations.value[0]
+  if (current) {
+    applyConversation(current)
+    return
+  }
+  threadId.value = createThreadId()
+  localStorage.setItem(THREAD_KEY, threadId.value)
+  resetMessages()
+}
+
+const deleteConversation = async (conversation: StoredConversation, event: Event) => {
+  event.stopPropagation()
+  conversations.value = conversations.value.filter((item) => item.threadId !== conversation.threadId)
+  saveConversations()
+  if (conversation.threadId !== threadId.value) return
+  const nextConversation = conversations.value[0]
+  if (nextConversation) {
+    await applyConversation(nextConversation)
+    return
+  }
+  threadId.value = createThreadId()
+  localStorage.setItem(THREAD_KEY, threadId.value)
+  useLocalKb.value = false
+  selectedKnowledgeFile.value = null
+  uploadStatus.value = ''
+  resetMessages()
+}
+
+const formatConversationTime = (timestamp: number) => {
+  const date = new Date(timestamp)
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+  return date.toLocaleDateString([], { month: '2-digit', day: '2-digit' })
+}
+
 const resetMessages = () => {
   messages.value = [
     {
@@ -184,7 +351,7 @@ const persistAuth = (auth: AuthResponse) => {
   localStorage.setItem(TOKEN_KEY, auth.token)
   localStorage.setItem(USER_KEY, JSON.stringify(auth.user))
   localStorage.setItem(THREAD_KEY, threadId.value)
-  resetMessages()
+  openLatestConversationOrReset()
 }
 
 const clearAuth = () => {
@@ -192,11 +359,16 @@ const clearAuth = () => {
   currentUser.value = null
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
+  conversations.value = []
   messages.value = []
 }
 
 const authHeaders = () => ({
   'Content-Type': 'application/json',
+  Authorization: `Bearer ${authToken.value}`,
+})
+
+const bearerHeaders = () => ({
   Authorization: `Bearer ${authToken.value}`,
 })
 
@@ -250,7 +422,7 @@ const restoreSession = async () => {
     const user = (await response.json()) as AuthUser
     currentUser.value = user
     localStorage.setItem(USER_KEY, JSON.stringify(user))
-    resetMessages()
+    openLatestConversationOrReset()
   } catch {
     clearAuth()
   }
@@ -271,12 +443,54 @@ const logout = async () => {
 }
 
 const createNewChat = () => {
+  upsertCurrentConversation()
   threadId.value = createThreadId()
   localStorage.setItem(THREAD_KEY, threadId.value)
+  useLocalKb.value = false
+  selectedKnowledgeFile.value = null
+  uploadStatus.value = ''
   resetMessages()
   progressLogs.value = []
   errorMessage.value = ''
   query.value = ''
+}
+
+const onKnowledgeFileChange = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  selectedKnowledgeFile.value = input.files?.[0] || null
+  uploadStatus.value = selectedKnowledgeFile.value ? `已选择：${selectedKnowledgeFile.value.name}` : ''
+}
+
+const uploadKnowledgeFile = async () => {
+  if (!selectedKnowledgeFile.value || uploadingKnowledge.value) return
+  uploadingKnowledge.value = true
+  uploadStatus.value = '正在上传并写入向量库...'
+  try {
+    const form = new FormData()
+    form.append('file', selectedKnowledgeFile.value)
+    form.append('thread_id', threadId.value)
+    const response = await fetch('/api/v1/kb/upload', {
+      method: 'POST',
+      headers: bearerHeaders(),
+      body: form,
+    })
+    if (response.status === 401) {
+      clearAuth()
+      throw new Error('登录已过期，请重新登录')
+    }
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(text || `上传失败: ${response.status}`)
+    }
+    const result = (await response.json()) as { filename: string; chunks: number; message: string }
+    useLocalKb.value = true
+    uploadStatus.value = `${result.filename} 已入库，共 ${result.chunks} 个片段`
+    upsertCurrentConversation()
+  } catch (error) {
+    uploadStatus.value = error instanceof Error ? error.message : '上传失败'
+  } finally {
+    uploadingKnowledge.value = false
+  }
 }
 
 const usePrompt = async (prompt: string) => {
@@ -306,23 +520,36 @@ const pushProgress = (message: string) => {
 
 const runResearch = async () => {
   const userText = query.value.trim()
-  if (!userText || loading.value) return
+  if (!userText || currentLoading.value) return
   if (!isAuthenticated.value) {
     authError.value = '请先登录'
     return
   }
-  loading.value = true
+  const requestThreadId = threadId.value
+  const requestUseLocalKb = useLocalKb.value
   errorMessage.value = ''
   progressLogs.value = []
   query.value = ''
-  messages.value.push({ id: `u-${Date.now()}`, role: 'user', content: userText })
   const statusId = `s-${Date.now()}`
-  messages.value.push({ id: statusId, role: 'status', content: '正在初始化执行链路...' })
+  setThreadRunning(requestThreadId, true)
+  updateConversationMessages(
+    requestThreadId,
+    (items) => [
+      ...items,
+      { id: `u-${Date.now()}`, role: 'user', content: userText },
+      { id: statusId, role: 'status', content: '正在初始化执行链路...' },
+    ],
+    { useLocalKb: requestUseLocalKb, uploadStatus: uploadStatus.value, running: true },
+  )
+  const requestProgressLogs: string[] = []
   const renderStatusText = () => {
-    const statusMessage = messages.value.find((item) => item.id === statusId)
-    if (!statusMessage) return
-    const latest = progressLogs.value.slice(-8)
-    statusMessage.content = ['正在处理...', ...latest].map((line) => `- ${line}`).join('\n')
+    const latest = requestProgressLogs.slice(-8)
+    const content = ['正在处理...', ...latest].map((line) => `- ${line}`).join('\n')
+    updateConversationMessages(
+      requestThreadId,
+      (items) => items.map((item) => (item.id === statusId ? { ...item, content } : item)),
+      { useLocalKb: requestUseLocalKb, uploadStatus: uploadStatus.value, running: true },
+    )
   }
   renderStatusText()
   await scrollToBottom()
@@ -333,8 +560,9 @@ const runResearch = async () => {
       body: JSON.stringify({
         query: userText,
         user_id: userId.value,
-        thread_id: threadId.value,
+        thread_id: requestThreadId,
         tenant_id: tenantId.value,
+        use_local_kb: requestUseLocalKb,
       }),
     })
     if (response.status === 401) {
@@ -364,16 +592,29 @@ const runResearch = async () => {
         const event = JSON.parse(jsonText) as StreamEvent
         if (event.type === 'status' || event.type === 'phase' || event.type === 'route') {
           const prefix = event.type === 'phase' && event.node ? `[${event.node}] ` : ''
-          pushProgress(`${prefix}${event.message || ''}`)
+          const msg = `${prefix}${event.message || ''}`.trim()
+          if (msg && requestProgressLogs[requestProgressLogs.length - 1] !== msg) {
+            requestProgressLogs.push(msg)
+          }
+          if (requestThreadId === threadId.value) {
+            pushProgress(msg)
+          }
           renderStatusText()
         }
         if (event.type === 'final') {
-          messages.value = messages.value.filter((item) => item.id !== statusId)
-          messages.value.push({
-            id: `a-${Date.now()}`,
-            role: 'assistant',
-            content: event.final || '已完成，但未返回正文。',
-          })
+          setThreadRunning(requestThreadId, false)
+          updateConversationMessages(
+            requestThreadId,
+            (items) => [
+              ...items.filter((item) => item.id !== statusId),
+              {
+                id: `a-${Date.now()}`,
+                role: 'assistant',
+                content: event.final || '已完成，但未返回正文。',
+              },
+            ],
+            { useLocalKb: requestUseLocalKb, uploadStatus: uploadStatus.value, running: false },
+          )
         }
         if (event.type === 'error') {
           throw new Error(event.message || '服务端执行异常')
@@ -383,14 +624,25 @@ const runResearch = async () => {
     }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '请求失败'
-    messages.value = messages.value.filter((item) => item.id !== statusId)
-    messages.value.push({
-      id: `e-${Date.now()}`,
-      role: 'assistant',
-      content: `请求失败：${errorMessage.value}`,
-    })
+    updateConversationMessages(
+      requestThreadId,
+      (items) => [
+        ...items.filter((item) => item.id !== statusId),
+        {
+          id: `e-${Date.now()}`,
+          role: 'assistant',
+          content: `请求失败：${errorMessage.value}`,
+        },
+      ],
+      { useLocalKb: requestUseLocalKb, uploadStatus: uploadStatus.value, running: false },
+    )
   } finally {
-    loading.value = false
+    setThreadRunning(requestThreadId, false)
+    updateConversationMessages(
+      requestThreadId,
+      (items) => items.filter((item) => item.id !== statusId),
+      { useLocalKb: requestUseLocalKb, uploadStatus: uploadStatus.value, running: false },
+    )
     await scrollToBottom()
   }
 }
@@ -404,9 +656,9 @@ onMounted(() => {
   <div v-if="!isAuthenticated" class="auth-shell">
     <section class="auth-panel">
       <div class="auth-copy">
-        <p class="brand-badge">AI Copilot</p>
-        <h1>DeepResearch</h1>
-        <p>登录后系统会用真实用户 ID 和会话 ID 做记忆隔离，避免不同用户的历史信息互相串扰。</p>
+        <p class="brand-badge">Deep Research</p>
+        <h1>深度研究型智能体</h1>
+        <p>面向复杂问题的多智能体研究工作台，支持联网检索、本地文档分析与结构化报告生成。</p>
       </div>
 
       <form class="auth-form" @submit.prevent="submitAuth">
@@ -462,6 +714,27 @@ onMounted(() => {
         <button class="new-chat-btn" @click="createNewChat">新建会话</button>
       </div>
 
+      <div class="conversation-list">
+        <p class="section-title">会话记录</p>
+        <div
+          v-for="item in conversations"
+          :key="item.threadId"
+          class="conversation-item"
+          :class="{ active: item.threadId === threadId, running: isThreadRunning(item.threadId) }"
+          role="button"
+          tabindex="0"
+          @click="switchConversation(item)"
+          @keydown.enter.prevent="switchConversation(item)"
+        >
+          <div>
+            <strong>{{ item.title }}</strong>
+            <span>{{ isThreadRunning(item.threadId) ? '生成中' : formatConversationTime(item.updatedAt) }}</span>
+          </div>
+          <button class="conversation-delete" title="删除会话" @click="deleteConversation(item, $event)">×</button>
+        </div>
+        <p v-if="!conversations.length" class="empty-history">暂无历史会话</p>
+      </div>
+
       <div class="quick-entry">
         <p class="section-title">推荐起手问题</p>
         <button
@@ -472,6 +745,21 @@ onMounted(() => {
         >
           {{ item.title }}
         </button>
+      </div>
+
+      <div class="kb-panel">
+        <div class="kb-panel-head">
+          <p class="section-title">本地知识库</p>
+          <label class="switch-row">
+            <input v-model="useLocalKb" type="checkbox" />
+            <span>使用</span>
+          </label>
+        </div>
+        <input class="file-input" type="file" accept=".txt,.md,.csv,.json,.log,.pdf" @change="onKnowledgeFileChange" />
+        <button class="upload-btn" :disabled="!selectedKnowledgeFile || uploadingKnowledge" @click="uploadKnowledgeFile">
+          {{ uploadingKnowledge ? '入库中...' : '上传文档' }}
+        </button>
+        <p v-if="uploadStatus" class="upload-status">{{ uploadStatus }}</p>
       </div>
 
       <div class="identity-panel">
@@ -526,12 +814,12 @@ onMounted(() => {
           v-model="query"
           ref="composerRef"
           class="composer-input"
-          :disabled="loading"
+          :disabled="currentLoading"
           placeholder="输入你的问题，回车发送（Shift + Enter 换行）"
           @keydown.enter.exact.prevent="runResearch"
         />
-        <button class="send-btn" :disabled="loading || !query.trim()" @click="runResearch">
-          {{ loading ? '处理中...' : '发送' }}
+        <button class="send-btn" :disabled="currentLoading || !query.trim()" @click="runResearch">
+          {{ currentLoading ? '处理中...' : '发送' }}
         </button>
       </div>
       <p v-if="errorMessage" class="error">{{ errorMessage }}</p>

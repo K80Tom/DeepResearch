@@ -24,6 +24,7 @@ async def run_research(
         tenant_id=current_user.tenant_id,
         max_iterations=payload.max_iterations,
         enable_memory=payload.enable_memory,
+        use_local_kb=payload.use_local_kb,
     )
     return ResearchResponse(
         query=payload.query,
@@ -50,6 +51,7 @@ async def stream_research(
             tenant_id=current_user.tenant_id,
             max_iterations=payload.max_iterations,
             enable_memory=payload.enable_memory,
+            use_local_kb=payload.use_local_kb,
         ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 

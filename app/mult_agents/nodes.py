@@ -242,7 +242,7 @@ def _derive_direct_search_queries(query: str) -> list[str]:
         text = item.strip()
         if text and text not in deduped:
             deduped.append(text)
-    return deduped[:6]
+    return deduped[:3]
 
 
 def _is_query_grounded(candidate: str, user_query: str) -> bool:
@@ -786,31 +786,36 @@ def _render_reference_list(state: ResearchState) -> str:
     if not cited_ids:
         cited_ids = list(lookup.keys())
     
-    # 4. 对 local 来源按 locator 去重展示（同一文件多个 chunk 只展示一次）
-    seen_locators: set[str] = set()
+    # 4. 按真实来源去重展示：同一 URL/同一文件即使被多个 source_id 命中，也只展示一次。
+    seen_references: set[str] = set()
     display_ids: list[str] = []
     web_ids: list[str] = []
     local_ids: list[str] = []
+    other_ids: list[str] = []
     
     for sid in cited_ids:
         source = lookup.get(sid)
         if not source:
             continue
-        source_type = source.get("source_type", "")
-        locator = source.get("locator", "").strip()
+        source_type = str(source.get("source_type", "")).strip()
+        locator = str(source.get("locator", "")).strip()
+        normalized_locator = locator
+        if source_type == "web" and normalized_locator:
+            normalized_locator = normalized_locator.split("#", 1)[0].rstrip("/")
+        dedup_key = f"{source_type}:{normalized_locator or sid}"
+        if dedup_key in seen_references:
+            continue
+        seen_references.add(dedup_key)
         
         if source_type == "local":
-            # 同一文件路径只保留第一次出现的 source_id 做代表
-            dedup_key = locator or sid
-            if dedup_key in seen_locators:
-                continue
-            seen_locators.add(dedup_key)
             local_ids.append(sid)
-        else:
+        elif source_type == "web":
             web_ids.append(sid)
+        else:
+            other_ids.append(sid)
     
     # 5. 排列顺序：WEB 在前（保持原始引用顺序），LOCAL 跟后
-    display_ids = web_ids + local_ids
+    display_ids = web_ids + local_ids + other_ids
     
     if not display_ids:
         display_ids = cited_ids[:15]
@@ -1034,8 +1039,8 @@ def web_search_node(state: ResearchState, agent, agent_name: str) -> ResearchSta
     for query_index, item in enumerate(queries, 1):
         query_text = str(item.get("query", ""))
         logger.info("[web_search_node] 执行第 %s/%s 个查询 | query=%s | section_id=%s", query_index, len(queries), query_text, item.get("section_id"))
-        # 优化点：减少单词请求返回的数量，从 count=6 降至 count=4，大幅减少无用 Token 消耗
-        records = bocha_web_search_records(query_text, count=4)
+        # 降低单次检索返回量，减少搜索等待和后续 LLM 过滤 token。
+        records = bocha_web_search_records(query_text, count=3)
         logger.info("[web_search_node] 查询 %s 返回 | 记录数=%s", query_index, len(records))
         records = _assign_source_ids(records, f"{prefix}_{query_index}")
         for record in records:
@@ -1119,6 +1124,16 @@ def web_search_node(state: ResearchState, agent, agent_name: str) -> ResearchSta
 
 def local_rag_node(state: ResearchState, agent, agent_name: str) -> ResearchState:
     logger.info("%s 开始 | agent=%s", colorize("[local_rag]", "cyan"), colorize(agent_name, "magenta"))
+    if not state.get("use_local_kb", False):
+        logger.info("%s 未启用本地知识库，本轮跳过 Milvus 检索", colorize("[local_rag]", "yellow"))
+        local_retrieval_stats = state.get("local_retrieval_stats", {})
+        local_retrieval_stats["skipped"] = local_retrieval_stats.get("skipped", 0) + 1
+        return {
+            "local_rag": "本轮未启用本地知识库检索，已跳过 Local Scout。",
+            "local_evidence": state.get("local_evidence", []),
+            "local_retrieval_stats": local_retrieval_stats,
+            "local_rag_trace": state.get("local_rag_trace", []),
+        }
     queries = _build_queries(state, "local")
     raw_records = []
     query_traces = state.get("local_rag_trace", [])
@@ -1127,7 +1142,13 @@ def local_rag_node(state: ResearchState, agent, agent_name: str) -> ResearchStat
     prefix = f"LOC{iteration+1}"
     
     for query_index, item in enumerate(queries, 1):
-        records = search_knowledge_base_records(str(item.get("query", "")), limit=4)
+        records = search_knowledge_base_records(
+            str(item.get("query", "")),
+            limit=2,
+            tenant_id=state.get("tenant_id", ""),
+            user_id=state.get("user_id", ""),
+            thread_id=state.get("thread_id", ""),
+        )
         records = _assign_source_ids(records, f"{prefix}_{query_index}")
         for record in records:
             record["section_id"] = item.get("section_id")

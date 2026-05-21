@@ -6,6 +6,7 @@ class ResearchRequest(BaseModel):
     user_id: str = Field(default="default_user", min_length=1)
     thread_id: str = Field(default="default_thread", min_length=1)
     tenant_id: str = Field(default="default_tenant", min_length=1)
+    use_local_kb: bool = False
     max_iterations: int | None = Field(default=None, ge=1, le=6)
     enable_memory: bool | None = None
 

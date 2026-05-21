@@ -114,33 +114,53 @@ class RAGSystem:
             logger.error("检索失败: %s", exc)
             return f"检索过程中发生错误: {str(exc)}"
 
-    def search_records(self, query: str, k: int = 5) -> list[dict]:
+    def search_records(self, query: str, k: int = 5, metadata_filter: Optional[dict] = None) -> list[dict]:
         if not utility.has_collection(self.config.collection_name):
             return []
-        docs = self.vectorstore.similarity_search(query, k=k)
+        search_k = max(k * 5, 20) if metadata_filter else k
+        docs = self.vectorstore.similarity_search(query, k=search_k)
         records: list[dict] = []
-        for idx, doc in enumerate(docs, 1):
+        for doc in docs:
             metadata = doc.metadata or {}
+            if metadata_filter:
+                matched = True
+                for key, expected in metadata_filter.items():
+                    if expected is None or str(expected).strip() == "":
+                        continue
+                    if str(metadata.get(key, "")).strip() != str(expected).strip():
+                        matched = False
+                        break
+                if not matched:
+                    continue
             source = str(metadata.get("source") or "").strip()
-            title = Path(source).name if source else f"本地知识片段-{idx}"
+            title = str(metadata.get("title") or "").strip() or (Path(source).name if source else f"本地知识片段-{len(records) + 1}")
             records.append(
                 {
-                    "source_id": f"LOC-{idx}",
-                    "doc_id": source,
+                    "source_id": f"LOC-{len(records) + 1}",
+                    "doc_id": str(metadata.get("doc_id") or source),
                     "title": title,
                     "snippet": doc.page_content,
                     "source_type": "local",
                     "metadata": metadata,
                 }
             )
+            if len(records) >= k:
+                break
         return records
 
     def add_documents(self, documents: list[Document]) -> int:
         self.vectorstore.add_documents(documents)
         return len(documents)
 
-    def ingest_text(self, text: str, source: str) -> int:
-        docs = self.text_splitter.create_documents([text], metadatas=[{"source": source}])
+    def ingest_text(self, text: str, source: str, metadata: Optional[dict] = None) -> int:
+        doc_metadata = dict(metadata or {})
+        doc_metadata.setdefault("source", source)
+        doc_metadata.setdefault("title", Path(source).name if source else "uploaded_document")
+        title = str(doc_metadata.get("title") or source or "uploaded_document")
+        docs = self.text_splitter.create_documents([text], metadatas=[doc_metadata])
+        for index, doc in enumerate(docs, 1):
+            doc.metadata["chunk_index"] = index
+            doc.page_content = f"文件名：{title}\n来源：{source}\n片段：{doc.page_content}"
         return self.add_documents(docs)
 
     def ingest_paths(self, paths: Iterable[Path]) -> int:

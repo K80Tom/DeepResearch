@@ -29,13 +29,30 @@ def init_rag_system(api_key: str, config: Optional[RAGConfig] = None):
             print(f"RAG 系统初始化失败: {e}")
 
 
-def search_knowledge_base_records(query: str, limit: int = 5) -> list[dict]:
+def search_knowledge_base_records(
+    query: str,
+    limit: int = 5,
+    tenant_id: str | None = None,
+    user_id: str | None = None,
+    thread_id: str | None = None,
+) -> list[dict]:
     if _RAG_SYSTEM is None:
         return []
     try:
-        return _RAG_SYSTEM.search_records(query, k=limit)
+        metadata_filter = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "thread_id": thread_id,
+        }
+        return _RAG_SYSTEM.search_records(query, k=limit, metadata_filter=metadata_filter)
     except Exception:
         return []
+
+
+def ingest_knowledge_text(text: str, source: str, metadata: Optional[dict] = None) -> int:
+    if _RAG_SYSTEM is None:
+        raise RuntimeError("RAG 系统未初始化")
+    return _RAG_SYSTEM.ingest_text(text, source=source, metadata=metadata)
 
 
 def bocha_web_search_records(query: str, count: int = 8) -> list[dict]:

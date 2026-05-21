@@ -9,7 +9,9 @@ from langchain_core.messages import BaseMessage
 class ResearchState(TypedDict):
     query: str
     user_id: str
+    thread_id: str
     tenant_id: str
+    use_local_kb: bool
     memory_context: str
     messages: Annotated[List[BaseMessage], operator.add]
     intent: str
@@ -52,11 +54,15 @@ def create_initial_state(
     user_id: str,
     tenant_id: str,
     memory_context: str = "",
+    thread_id: str = "default_thread",
+    use_local_kb: bool = False,
 ) -> ResearchState:
     return {
         "query": query,
         "user_id": user_id,
+        "thread_id": thread_id,
         "tenant_id": tenant_id,
+        "use_local_kb": use_local_kb,
         "memory_context": memory_context,
         "messages": [],
         "intent": "",

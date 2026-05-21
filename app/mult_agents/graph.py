@@ -28,6 +28,8 @@ logger = logging.getLogger("mult_agents")
 
 
 def route_after_intent(state: ResearchState) -> str:
+    if state.get("use_local_kb"):
+        return "plan"
     if state.get("intent") == "direct":
         return "direct_answer"
     return "plan"

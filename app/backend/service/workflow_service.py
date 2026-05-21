@@ -59,6 +59,7 @@ class WorkflowService:
         tenant_id: str,
         max_iterations: int | None,
         enable_memory: bool | None,
+        use_local_kb: bool = False,
     ) -> tuple[str, str]:
         self._ensure_initialized()
         runtime_config = self._build_runtime_config(
@@ -83,6 +84,8 @@ class WorkflowService:
             user_id=runtime_config.user_id,
             tenant_id=runtime_config.tenant_id,
             memory_context=memory_context,
+            thread_id=runtime_config.thread_id,
+            use_local_kb=use_local_kb,
         )
         result = self._app.invoke(
             state,
@@ -101,7 +104,11 @@ class WorkflowService:
         return final, route
 
     @staticmethod
-    def _node_message(node_name: str) -> str:
+    def _node_message(node_name: str, node_output: dict | None = None) -> str:
+        if node_name == "local_rag" and isinstance(node_output, dict):
+            stats = node_output.get("local_retrieval_stats", {})
+            if isinstance(stats, dict) and stats.get("skipped"):
+                return "Local Scout 未启用本地知识库，已跳过 Milvus 检索"
         mapping = {
             "intent": "Intent Router 正在识别问题意图",
             "direct_answer": "Direct Responder 正在快速作答",
@@ -124,6 +131,7 @@ class WorkflowService:
         max_iterations: int | None,
         enable_memory: bool | None,
         emit: Callable[[dict], None],
+        use_local_kb: bool = False,
     ) -> tuple[str, str]:
         self._ensure_initialized()
         runtime_config = self._build_runtime_config(
@@ -148,6 +156,8 @@ class WorkflowService:
             user_id=runtime_config.user_id,
             tenant_id=runtime_config.tenant_id,
             memory_context=memory_context,
+            thread_id=runtime_config.thread_id,
+            use_local_kb=use_local_kb,
         )
         final = ""
         route = "multiagent"
@@ -156,7 +166,7 @@ class WorkflowService:
             if not isinstance(update, dict):
                 continue
             for node_name, node_output in update.items():
-                emit({"type": "phase", "node": node_name, "message": self._node_message(str(node_name))})
+                emit({"type": "phase", "node": node_name, "message": self._node_message(str(node_name), node_output if isinstance(node_output, dict) else None)})
                 if isinstance(node_output, dict):
                     if node_name == "intent":
                         detected = str(node_output.get("intent", route)).strip().lower()
@@ -187,6 +197,7 @@ class WorkflowService:
         tenant_id: str,
         max_iterations: int | None,
         enable_memory: bool | None,
+        use_local_kb: bool = False,
     ) -> str:
         final, _ = await asyncio.to_thread(
             self._run_sync,
@@ -196,6 +207,7 @@ class WorkflowService:
             tenant_id,
             max_iterations,
             enable_memory,
+            use_local_kb,
         )
         return final
 
@@ -207,6 +219,7 @@ class WorkflowService:
         tenant_id: str,
         max_iterations: int | None,
         enable_memory: bool | None,
+        use_local_kb: bool = False,
     ) -> tuple[str, str]:
         return await asyncio.to_thread(
             self._run_sync,
@@ -216,6 +229,7 @@ class WorkflowService:
             tenant_id,
             max_iterations,
             enable_memory,
+            use_local_kb,
         )
 
     async def stream_events(
@@ -226,6 +240,7 @@ class WorkflowService:
         tenant_id: str,
         max_iterations: int | None,
         enable_memory: bool | None,
+        use_local_kb: bool = False,
     ) -> AsyncIterator[dict]:
         queue: asyncio.Queue[dict] = asyncio.Queue()
         loop = asyncio.get_running_loop()
@@ -243,6 +258,7 @@ class WorkflowService:
                     max_iterations=max_iterations,
                     enable_memory=enable_memory,
                     emit=emit,
+                    use_local_kb=use_local_kb,
                 )
                 emit({"type": "route", "message": "已走直接回答路径" if route == "direct" else "已走多智能体研究路径"})
                 emit(

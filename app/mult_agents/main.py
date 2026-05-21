@@ -472,6 +472,8 @@ def run_query(app, config: AppConfig, query: str):
         user_id=config.user_id,
         tenant_id=config.tenant_id,
         memory_context=memory_context,
+        thread_id=config.thread_id,
+        use_local_kb=True,
     )
     result = app.invoke(
         state,
