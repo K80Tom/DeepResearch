@@ -986,3 +986,197 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 640px) {
+  body {
+    background: #f5f7ff;
+  }
+
+  .auth-shell {
+    padding: 12px;
+  }
+
+  .auth-panel {
+    border-radius: 18px;
+  }
+
+  .auth-copy {
+    padding: 22px;
+  }
+
+  .auth-copy h1 {
+    font-size: 24px;
+  }
+
+  .auth-form {
+    padding: 20px;
+  }
+
+  .chat-shell {
+    padding: 0;
+    gap: 0;
+    background: #f5f7ff;
+  }
+
+  .mobile-menu-btn {
+    top: max(10px, env(safe-area-inset-top));
+    left: 10px;
+    z-index: 50;
+    border-radius: 999px;
+    padding: 8px 11px;
+    font-size: 12px;
+  }
+
+  .chat-sidebar {
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(88vw, 320px);
+    max-width: 88vw;
+    border-radius: 0 18px 18px 0;
+    padding: 44px 14px 14px;
+  }
+
+  .mobile-sidebar-close {
+    top: 10px;
+    right: 10px;
+  }
+
+  .chat-main {
+    height: 100dvh;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: #ffffff;
+  }
+
+  .main-header {
+    flex: 0 0 auto;
+    padding: 12px 12px 10px 62px;
+    gap: 8px;
+  }
+
+  .main-header h2 {
+    font-size: 19px;
+    line-height: 1.25;
+  }
+
+  .main-header p {
+    margin-top: 5px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .header-tags {
+    display: none;
+  }
+
+  .message-list {
+    padding: 10px;
+  }
+
+  .onboarding-panel {
+    margin-bottom: 10px;
+    padding: 10px;
+    border-radius: 16px;
+    box-shadow: none;
+  }
+
+  .hero-panel {
+    border-radius: 14px;
+    padding: 14px;
+  }
+
+  .hero-badge {
+    max-width: 100%;
+    padding: 4px 9px;
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  .hero-panel h3 {
+    margin: 10px 0 8px;
+    font-size: 20px;
+    line-height: 1.35;
+  }
+
+  .hero-desc {
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .hero-actions {
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .hero-btn {
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-size: 12px;
+  }
+
+  .metric-grid {
+    margin-top: 12px;
+    gap: 8px;
+  }
+
+  .metric-grid article,
+  .capability-card,
+  .guide-grid article {
+    border-radius: 12px;
+    padding: 10px;
+  }
+
+  .capability-grid,
+  .guide-panel {
+    display: none;
+  }
+
+  .message-row {
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+
+  .bubble {
+    max-width: calc(100% - 38px);
+    border-radius: 14px;
+    padding: 11px 12px;
+    font-size: 14px;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+  }
+
+  .role-user .bubble {
+    max-width: 82%;
+  }
+
+  .composer {
+    flex: 0 0 auto;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .composer-input {
+    min-height: 48px;
+    max-height: 120px;
+    resize: none;
+    border-radius: 12px;
+    padding: 10px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .send-btn {
+    width: 72px;
+    height: auto;
+    min-height: 48px;
+    border-radius: 12px;
+  }
+}
