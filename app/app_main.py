@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from app.backend.config import AppSettings
-from app.backend.router import health_router, research_router
+from app.backend.router import auth_router, health_router, research_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,6 +38,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health_router)
+    app.include_router(auth_router)
     app.include_router(research_router)
     return app
 

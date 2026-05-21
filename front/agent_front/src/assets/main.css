@@ -19,6 +19,135 @@ body {
   overflow: hidden;
 }
 
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.auth-shell {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-panel {
+  width: min(920px, 100%);
+  min-height: 520px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid rgba(126, 148, 202, 0.24);
+  background: #ffffff;
+  box-shadow: 0 18px 54px rgba(37, 62, 120, 0.14);
+}
+
+.auth-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 42px;
+  color: #ffffff;
+  background:
+    radial-gradient(circle at 88% 18%, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0) 32%),
+    linear-gradient(135deg, #254bba 0%, #4f6fdf 54%, #1f8a73 100%);
+}
+
+.auth-copy h1 {
+  margin: 14px 0 10px;
+  font-size: 34px;
+  line-height: 1.2;
+}
+
+.auth-copy p {
+  margin: 0;
+  max-width: 520px;
+  color: rgba(255, 255, 255, 0.88);
+  line-height: 1.75;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 34px;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.auth-tabs button,
+.auth-submit,
+.user-card button {
+  border: none;
+  cursor: pointer;
+}
+
+.auth-tabs button {
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #edf3ff;
+  color: #3d4f7a;
+  font-weight: 600;
+}
+
+.auth-tabs button.active {
+  background: #2f5dcc;
+  color: #ffffff;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #41537d;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-form input {
+  border-radius: 10px;
+  border: 1px solid #cfdbf4;
+  background: #f9fbff;
+  color: #243764;
+  padding: 11px 12px;
+  outline: none;
+}
+
+.auth-form input:focus {
+  border-color: #7c9af0;
+  box-shadow: 0 0 0 3px rgba(81, 114, 219, 0.14);
+}
+
+.auth-submit {
+  margin-top: 4px;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(90deg, #315ecb 0%, #1f8a73 100%);
+  color: #fff;
+  font-weight: 700;
+}
+
+.auth-submit:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.auth-error {
+  margin: 0;
+  color: #d93f5c;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .chat-shell {
   position: fixed;
   inset: 0;
@@ -37,6 +166,7 @@ body {
   flex-direction: column;
   gap: 16px;
   box-shadow: 0 12px 40px rgba(35, 66, 145, 0.1);
+  overflow: hidden;
 }
 
 .sidebar-brand {
@@ -72,6 +202,40 @@ body {
 .sidebar-head {
   display: flex;
   justify-content: flex-end;
+}
+
+.user-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #d9e5fb;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.user-card span {
+  display: block;
+  color: #7388b2;
+  font-size: 12px;
+}
+
+.user-card strong {
+  display: block;
+  margin-top: 2px;
+  color: #243764;
+  font-size: 14px;
+}
+
+.user-card button {
+  flex-shrink: 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #eef4ff;
+  color: #3458b8;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .new-chat-btn {
@@ -143,6 +307,30 @@ body {
 .sidebar-input:focus {
   border-color: #7c9af0;
   box-shadow: 0 0 0 3px rgba(81, 114, 219, 0.14);
+}
+
+.identity-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #d9e5fb;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.identity-panel p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  color: #2d3f68;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.identity-panel span {
+  color: #7488b0;
+  font-weight: 600;
 }
 
 .hint-text {
@@ -535,6 +723,23 @@ body {
 }
 
 @media (max-width: 1024px) {
+  .auth-panel {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .auth-copy {
+    padding: 28px;
+  }
+
+  .auth-copy h1 {
+    font-size: 28px;
+  }
+
+  .auth-form {
+    padding: 24px;
+  }
+
   .chat-shell {
     grid-template-columns: 1fr;
     padding: 10px;

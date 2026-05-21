@@ -10,6 +10,8 @@ class AppSettings(BaseSettings):
     port: int = 8000
     cors_allow_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     config_path: str = str(Path(__file__).resolve().parents[3] / "config.json")
+    postgres_dsn: str = "postgresql://127.0.0.1:5432/postgres"
+    auth_token_ttl_hours: int = 168
 
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).resolve().parents[3] / ".env"),

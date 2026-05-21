@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
 type StreamEvent = {
   type: 'status' | 'phase' | 'route' | 'final' | 'error'
@@ -14,59 +14,81 @@ type ChatMessage = {
   content: string
 }
 
-const userId = ref('user01')
-const threadId = ref('thread01')
-const tenantId = ref('default_tenant')
+type AuthUser = {
+  id: string
+  username: string
+  tenant_id: string
+  email?: string | null
+  display_name?: string | null
+}
+
+type AuthResponse = {
+  token: string
+  user: AuthUser
+}
+
+const TOKEN_KEY = 'deepresearch_auth_token'
+const USER_KEY = 'deepresearch_auth_user'
+const THREAD_KEY = 'deepresearch_thread_id'
+
+const createThreadId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `thread-${crypto.randomUUID()}`
+  }
+  return `thread-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+const savedToken = localStorage.getItem(TOKEN_KEY) || ''
+const savedUser = localStorage.getItem(USER_KEY)
+
+const authToken = ref(savedToken)
+const currentUser = ref<AuthUser | null>(savedUser ? JSON.parse(savedUser) : null)
+const authMode = ref<'login' | 'register'>('login')
+const authLoading = ref(false)
+const authError = ref('')
+const authForm = ref({
+  username: '',
+  password: '',
+  email: '',
+  display_name: '',
+})
+
+const threadId = ref(localStorage.getItem(THREAD_KEY) || createThreadId())
+const tenantId = computed(() => currentUser.value?.tenant_id || 'default_tenant')
+const userId = computed(() => currentUser.value?.id || '')
+const displayName = computed(() => currentUser.value?.display_name || currentUser.value?.username || '用户')
+const isAuthenticated = computed(() => Boolean(authToken.value && currentUser.value))
+
 const query = ref('')
 const loading = ref(false)
 const errorMessage = ref('')
 const messageListRef = ref<HTMLElement | null>(null)
 const composerRef = ref<HTMLTextAreaElement | null>(null)
 const progressLogs = ref<string[]>([])
+
 const starterPrompts = [
   {
     title: '深度调研',
-    prompt:
-      '请调研“企业知识库 Agent 平台”市场，按市场规模、主要竞品、收费模式三部分输出，并在每部分附上可追溯来源链接。',
+    prompt: '请调研“企业知识库 Agent 平台”市场，按市场规模、主要竞品、收费模式三部分输出，并在每部分附上可追溯来源链接。',
   },
   {
     title: '方案对比',
-    prompt:
-      '我们要做多 Agent 研究助手，请对比“纯大模型直答”“RAG 单 Agent”“多 Agent 协作”三种方案，给出优缺点、适用场景与推荐结论。',
+    prompt: '我们要做大模型研究助手，请对比“纯大模型直答”“RAG + Agent”“多 Agent 协作”三种方案，给出优缺点、适用场景与推荐结论。',
   },
   {
     title: '知识问答',
     prompt: '请解释这个项目里“意图分流”的作用，以及简单问题和复杂问题分别会走哪条链路。',
   },
-  {
-    title: '落地计划',
-    prompt: '请把“上线一个可用的 DeepResearch MVP”拆成两周计划，按每天输出任务、验收标准和风险点。',
-  },
 ]
-const capabilityHighlights = [
-  {
-    title: '多智能体编排',
-    desc: '自动完成规划、检索、证据裁判、分析与写作，减少手工研究路径。',
-  },
-  {
-    title: '双源检索融合',
-    desc: '网络信息与本地知识库并行召回，输出结论同时保留来源可追溯性。',
-  },
-  {
-    title: '会话记忆增强',
-    desc: '跨轮次继承用户偏好与历史任务，持续提升回答一致性和效率。',
-  },
-]
-const landingMetrics = [
-  { label: '执行模式', value: 'Quick + Deep' },
-  { label: '检索来源', value: 'Web + Local' },
-  { label: '输出风格', value: '结论 + 证据' },
-]
+
+const welcomeText = () =>
+  `你好，${displayName.value}。你可以直接提问，我会根据当前会话 ${threadId.value} 做记忆隔离。`
+
 const messages = ref<ChatMessage[]>([
   {
     id: `m-${Date.now()}`,
     role: 'assistant',
-    content: '你好，我是 DeepResearch。你可以直接提问，我会根据意图自动走快速回答或完整研究链路。',
+    content: welcomeText(),
   },
 ])
 
@@ -146,14 +168,112 @@ const scrollToBottom = async () => {
   }
 }
 
-const createNewChat = () => {
+const resetMessages = () => {
   messages.value = [
     {
       id: `m-${Date.now()}`,
       role: 'assistant',
-      content: '已开始新会话。你可以继续提问。',
+      content: welcomeText(),
     },
   ]
+}
+
+const persistAuth = (auth: AuthResponse) => {
+  authToken.value = auth.token
+  currentUser.value = auth.user
+  localStorage.setItem(TOKEN_KEY, auth.token)
+  localStorage.setItem(USER_KEY, JSON.stringify(auth.user))
+  localStorage.setItem(THREAD_KEY, threadId.value)
+  resetMessages()
+}
+
+const clearAuth = () => {
+  authToken.value = ''
+  currentUser.value = null
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(USER_KEY)
+  messages.value = []
+}
+
+const authHeaders = () => ({
+  'Content-Type': 'application/json',
+  Authorization: `Bearer ${authToken.value}`,
+})
+
+const submitAuth = async () => {
+  if (authLoading.value) return
+  authLoading.value = true
+  authError.value = ''
+  try {
+    const username = authForm.value.username.trim()
+    const password = authForm.value.password
+    const endpoint = authMode.value === 'login' ? '/api/v1/auth/login' : '/api/v1/auth/register'
+    const body =
+      authMode.value === 'login'
+        ? { username, password }
+        : {
+            username,
+            password,
+            email: authForm.value.email.trim() || null,
+            display_name: authForm.value.display_name.trim() || null,
+            tenant_id: 'default_tenant',
+          }
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(text || `登录失败: ${response.status}`)
+    }
+    const data = (await response.json()) as AuthResponse
+    persistAuth(data)
+    authForm.value.password = ''
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : '认证失败'
+  } finally {
+    authLoading.value = false
+  }
+}
+
+const restoreSession = async () => {
+  if (!authToken.value) return
+  try {
+    const response = await fetch('/api/v1/auth/me', {
+      headers: { Authorization: `Bearer ${authToken.value}` },
+    })
+    if (!response.ok) {
+      clearAuth()
+      return
+    }
+    const user = (await response.json()) as AuthUser
+    currentUser.value = user
+    localStorage.setItem(USER_KEY, JSON.stringify(user))
+    resetMessages()
+  } catch {
+    clearAuth()
+  }
+}
+
+const logout = async () => {
+  const token = authToken.value
+  clearAuth()
+  if (!token) return
+  try {
+    await fetch('/api/v1/auth/logout', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  } catch {
+    // Local logout should still work even if the network request fails.
+  }
+}
+
+const createNewChat = () => {
+  threadId.value = createThreadId()
+  localStorage.setItem(THREAD_KEY, threadId.value)
+  resetMessages()
   progressLogs.value = []
   errorMessage.value = ''
   query.value = ''
@@ -166,10 +286,11 @@ const usePrompt = async (prompt: string) => {
   composerRef.value?.focus()
 }
 
-const applyStarterByIndex = (index: number) => {
-  const target = starterPrompts[index]
-  if (!target) return
-  usePrompt(target.prompt)
+const useStarterPrompt = (index: number) => {
+  const item = starterPrompts[index]
+  if (item) {
+    usePrompt(item.prompt)
+  }
 }
 
 const pushProgress = (message: string) => {
@@ -186,6 +307,10 @@ const pushProgress = (message: string) => {
 const runResearch = async () => {
   const userText = query.value.trim()
   if (!userText || loading.value) return
+  if (!isAuthenticated.value) {
+    authError.value = '请先登录'
+    return
+  }
   loading.value = true
   errorMessage.value = ''
   progressLogs.value = []
@@ -197,21 +322,25 @@ const runResearch = async () => {
     const statusMessage = messages.value.find((item) => item.id === statusId)
     if (!statusMessage) return
     const latest = progressLogs.value.slice(-8)
-    statusMessage.content = ['正在处理中...', ...latest].map((line) => `- ${line}`).join('\n')
+    statusMessage.content = ['正在处理...', ...latest].map((line) => `- ${line}`).join('\n')
   }
   renderStatusText()
   await scrollToBottom()
   try {
     const response = await fetch('/api/v1/research/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(),
       body: JSON.stringify({
         query: userText,
-        user_id: userId.value.trim() || 'default_user',
-        thread_id: threadId.value.trim() || 'default_thread',
-        tenant_id: tenantId.value.trim() || 'default_tenant',
+        user_id: userId.value,
+        thread_id: threadId.value,
+        tenant_id: tenantId.value,
       }),
     })
+    if (response.status === 401) {
+      clearAuth()
+      throw new Error('登录已过期，请重新登录')
+    }
     if (!response.ok) {
       const text = await response.text()
       throw new Error(text || `请求失败: ${response.status}`)
@@ -265,23 +394,78 @@ const runResearch = async () => {
     await scrollToBottom()
   }
 }
+
+onMounted(() => {
+  restoreSession()
+})
 </script>
 
 <template>
-  <div class="chat-shell">
+  <div v-if="!isAuthenticated" class="auth-shell">
+    <section class="auth-panel">
+      <div class="auth-copy">
+        <p class="brand-badge">AI Copilot</p>
+        <h1>DeepResearch</h1>
+        <p>登录后系统会用真实用户 ID 和会话 ID 做记忆隔离，避免不同用户的历史信息互相串扰。</p>
+      </div>
+
+      <form class="auth-form" @submit.prevent="submitAuth">
+        <div class="auth-tabs">
+          <button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">登录</button>
+          <button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">注册</button>
+        </div>
+
+        <label>
+          用户名
+          <input v-model="authForm.username" autocomplete="username" required minlength="3" />
+        </label>
+        <label>
+          密码
+          <input v-model="authForm.password" type="password" autocomplete="current-password" required minlength="6" />
+        </label>
+        <template v-if="authMode === 'register'">
+          <label>
+            昵称
+            <input v-model="authForm.display_name" autocomplete="name" placeholder="可选" />
+          </label>
+          <label>
+            邮箱
+            <input v-model="authForm.email" type="email" autocomplete="email" placeholder="可选" />
+          </label>
+        </template>
+
+        <p v-if="authError" class="auth-error">{{ authError }}</p>
+        <button class="auth-submit" type="submit" :disabled="authLoading">
+          {{ authLoading ? '处理中...' : authMode === 'login' ? '登录' : '创建账号' }}
+        </button>
+      </form>
+    </section>
+  </div>
+
+  <div v-else class="chat-shell">
     <aside class="chat-sidebar">
       <div class="sidebar-brand">
         <p class="brand-badge">AI Copilot</p>
         <h1>DeepResearch</h1>
         <p class="brand-desc">多智能体研究工作台，支持快速回答与深度调研。</p>
       </div>
+
+      <div class="user-card">
+        <div>
+          <span>当前用户</span>
+          <strong>{{ displayName }}</strong>
+        </div>
+        <button @click="logout">退出</button>
+      </div>
+
       <div class="sidebar-head">
         <button class="new-chat-btn" @click="createNewChat">新建会话</button>
       </div>
+
       <div class="quick-entry">
         <p class="section-title">推荐起手问题</p>
         <button
-          v-for="item in starterPrompts.slice(0, 3)"
+          v-for="item in starterPrompts"
           :key="item.title"
           class="quick-entry-btn"
           @click="usePrompt(item.prompt)"
@@ -289,19 +473,13 @@ const runResearch = async () => {
           {{ item.title }}
         </button>
       </div>
-      <div class="settings-group">
-        <label>User ID</label>
-        <input v-model="userId" class="sidebar-input" />
+
+      <div class="identity-panel">
+        <p><span>User ID</span>{{ userId }}</p>
+        <p><span>Thread ID</span>{{ threadId }}</p>
+        <p><span>Tenant ID</span>{{ tenantId }}</p>
       </div>
-      <div class="settings-group">
-        <label>Thread ID</label>
-        <input v-model="threadId" class="sidebar-input" />
-      </div>
-      <div class="settings-group">
-        <label>Tenant ID</label>
-        <input v-model="tenantId" class="sidebar-input" />
-      </div>
-      <p class="hint-text">当前会话记忆键：{{ userId }} / {{ threadId }}</p>
+      <p class="hint-text">记忆隔离键：{{ userId }} / {{ threadId }}</p>
     </aside>
 
     <main class="chat-main">
@@ -316,54 +494,22 @@ const runResearch = async () => {
           <span>Memory-Powered</span>
         </div>
       </header>
+
       <div ref="messageListRef" class="message-list">
         <section v-if="messages.length <= 1" class="onboarding-panel">
           <div class="hero-panel">
-            <p class="hero-badge">商业研究 · 策略分析 · 知识问答</p>
-            <h3>第一步先讲清目标，再交给 DeepResearch 自动推进</h3>
+            <p class="hero-badge">商业研究 / 策略分析 / 知识问答</p>
+            <h3>先讲清目标，再交给 DeepResearch 自动推进</h3>
             <p class="hero-desc">
               推荐提问结构：目标 + 背景约束 + 期望输出。系统会自动选择快速回答或深度研究链路。
             </p>
             <div class="hero-actions">
-              <button class="hero-btn primary" @click="applyStarterByIndex(0)">快速开始调研</button>
-              <button class="hero-btn" @click="applyStarterByIndex(1)">查看方案对比</button>
+              <button class="hero-btn primary" @click="useStarterPrompt(0)">快速开始调研</button>
+              <button class="hero-btn" @click="useStarterPrompt(1)">查看方案对比</button>
             </div>
-            <div class="metric-grid">
-              <article v-for="item in landingMetrics" :key="item.label">
-                <p>{{ item.label }}</p>
-                <strong>{{ item.value }}</strong>
-              </article>
-            </div>
-          </div>
-          <div class="capability-grid">
-            <article v-for="item in capabilityHighlights" :key="item.title" class="capability-card">
-              <h4>{{ item.title }}</h4>
-              <p>{{ item.desc }}</p>
-            </article>
-          </div>
-          <div class="guide-panel">
-            <h4>提问指南</h4>
-            <div class="guide-grid">
-              <article>
-                <h5>1. 说明目标</h5>
-                <p>你要解决什么问题、面向谁、希望达到什么结果。</p>
-              </article>
-              <article>
-                <h5>2. 提供上下文</h5>
-                <p>给出已知信息、时间范围、数据口径、业务限制。</p>
-              </article>
-              <article>
-                <h5>3. 指定输出</h5>
-                <p>例如“表格输出”“附来源链接”“分点行动清单”。</p>
-              </article>
-            </div>
-          </div>
-          <div class="prompt-list">
-            <button v-for="item in starterPrompts" :key="item.prompt" class="prompt-chip" @click="usePrompt(item.prompt)">
-              {{ item.prompt }}
-            </button>
           </div>
         </section>
+
         <div
           v-for="message in messages"
           :key="message.id"
@@ -374,6 +520,7 @@ const runResearch = async () => {
           <div class="bubble markdown-body" v-html="renderMessageHtml(message)"></div>
         </div>
       </div>
+
       <div class="composer">
         <textarea
           v-model="query"

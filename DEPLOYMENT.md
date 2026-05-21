@@ -31,6 +31,7 @@ DASHSCOPE_API_KEY=...
 BOCHA_API_KEY=...
 POSTGRES_PASSWORD=...
 POSTGRES_DSN=postgresql://root:<same-password>@postgres:5432/postgres
+AUTH_TOKEN_TTL_HOURS=168
 MINIO_ROOT_PASSWORD=...
 CORS_ALLOW_ORIGINS=https://your-domain.com
 ```
@@ -59,9 +60,15 @@ curl http://127.0.0.1/health
 ## 4. Test the API
 
 ```bash
+TOKEN=$(curl -s http://127.0.0.1/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo_user","password":"demo123456","display_name":"Demo"}' \
+  | python -c "import json,sys; print(json.load(sys.stdin)['token'])")
+
 curl -N http://127.0.0.1/api/v1/research/stream \
   -H "Content-Type: application/json" \
-  -d '{"query":"你好","user_id":"user01","thread_id":"thread01","tenant_id":"default_tenant"}'
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"query":"你好","thread_id":"thread-demo"}'
 ```
 
 The response should stream Server-Sent Events:
