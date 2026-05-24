@@ -278,7 +278,11 @@ class WorkflowService:
 
         Thread(target=worker, daemon=True).start()
         while True:
-            event = await queue.get()
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                yield {"type": "status", "message": "仍在处理，请稍候..."}
+                continue
             if event.get("type") == "__done__":
                 break
             yield event
