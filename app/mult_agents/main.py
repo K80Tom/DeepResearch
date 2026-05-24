@@ -281,6 +281,7 @@ def build_memory_manager(config: AppConfig) -> Optional[MemoryManager]:
             short_term_summary_threshold=config.short_term_summary_threshold,
             tenant_id=config.tenant_id,
             short_term_backend=config.short_term_backend,
+            short_term_persist_backend=config.short_term_persist_backend,
             long_term_backend=config.long_term_backend,
             long_term_scope=config.long_term_scope,
             save_conversation_task=config.save_conversation_task,
@@ -367,6 +368,7 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument("--user-id", type=str, default=None)
     parser.add_argument("--thread-id", type=str, default=None)
     parser.add_argument("--short-term-backend", choices=["postgres", "redis", "memory"], default=None)
+    parser.add_argument("--short-term-persist-backend", choices=["postgres", "disabled"], default=None)
     parser.add_argument("--long-term-backend", choices=["postgres", "sqlite", "disabled"], default=None)
     parser.add_argument("--long-term-scope", choices=["user", "thread"], default=None)
     parser.add_argument("--save-conversation-task", choices=["true", "false"], default=None)
@@ -385,6 +387,7 @@ def build_runtime_config(args: argparse.Namespace) -> AppConfig:
         "user_id": args.user_id,
         "thread_id": args.thread_id,
         "short_term_backend": args.short_term_backend,
+        "short_term_persist_backend": args.short_term_persist_backend,
         "long_term_backend": args.long_term_backend,
         "long_term_scope": args.long_term_scope,
         "checkpointer_backend": args.checkpointer_backend,
@@ -398,12 +401,13 @@ def build_runtime_config(args: argparse.Namespace) -> AppConfig:
         overrides["save_conversation_task"] = args.save_conversation_task == "true"
     config = config.with_overrides(**overrides)
     logger.info(
-        "%s tenant=%s user=%s thread=%s short=%s long=%s scope=%s save_task=%s checkpointer=%s milvus=%s",
+        "%s tenant=%s user=%s thread=%s short=%s short_persist=%s long=%s scope=%s save_task=%s checkpointer=%s milvus=%s",
         colorize("[config]", "cyan"),
         config.tenant_id,
         config.user_id,
         config.thread_id,
         config.short_term_backend,
+        config.short_term_persist_backend,
         config.long_term_backend,
         config.long_term_scope,
         config.save_conversation_task,

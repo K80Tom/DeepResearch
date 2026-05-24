@@ -49,6 +49,7 @@ class MemoryManager:
         db_path: Optional[str] = None,
         tenant_id: str = "default_tenant",
         short_term_backend: str = "postgres",
+        short_term_persist_backend: str = "postgres",
         long_term_backend: str = "postgres",
         long_term_scope: str = "user",
         save_conversation_task: bool = False,
@@ -64,6 +65,9 @@ class MemoryManager:
     ):
         self.default_tenant_id = tenant_id
         self.short_term_backend = short_term_backend.lower()
+        self.short_term_persist_backend = short_term_persist_backend.lower()
+        if self.short_term_persist_backend in {"", "none", "disabled"}:
+            self.short_term_persist_backend = "disabled"
         self.long_term_backend = long_term_backend.lower()
         self.long_term_scope = long_term_scope.lower()
         if self.long_term_scope not in {"user", "thread"}:
@@ -90,8 +94,9 @@ class MemoryManager:
             self._init_milvus(milvus_host, milvus_port, milvus_collection, embedding_api_key, embedding_model)
         self._init_summary_llm(embedding_api_key, summary_model)
         logger.info(
-            "记忆管理器初始化完成 | short_term=%s | long_term=%s | scope=%s | save_task=%s | redis=%s | postgres=%s | milvus=%s",
+            "记忆管理器初始化完成 | short_term=%s | short_persist=%s | long_term=%s | scope=%s | save_task=%s | redis=%s | postgres=%s | milvus=%s",
             self.short_term_backend,
+            self.short_term_persist_backend,
             self.long_term_backend,
             self.long_term_scope,
             self.save_conversation_task,
@@ -157,7 +162,7 @@ class MemoryManager:
                             )
                             """
                         )
-                    if self.short_term_backend == "postgres":
+                    if self.short_term_backend == "postgres" or self.short_term_persist_backend == "postgres":
                         cur.execute(
                             """
                             CREATE TABLE IF NOT EXISTS short_term_messages (
@@ -234,6 +239,14 @@ class MemoryManager:
     def _redis_summary_key(self, tenant_id: str, user_id: str, thread_id: str) -> str:
         return f"ma:short:summary:{tenant_id}:{user_id}:{thread_id}"
 
+    def _persist_short_term_to_pg(self) -> bool:
+        return (
+            self.short_term_persist_backend == "postgres"
+            and self.short_term_backend == "redis"
+            and bool(self._postgres_dsn)
+            and psycopg is not None
+        )
+
     def _serialize_message(self, message: BaseMessage) -> Dict[str, str]:
         if isinstance(message, HumanMessage):
             role = "human"
@@ -290,6 +303,27 @@ class MemoryManager:
             pipe.rpush(key, *[json.dumps(item, ensure_ascii=False) for item in keep_messages])
         pipe.set(summary_key, new_summary, ex=self.short_term_ttl)
         pipe.expire(key, self.short_term_ttl)
+        pipe.execute()
+
+    def _backfill_redis_thread(
+        self,
+        tenant_id: str,
+        user_id: str,
+        thread_id: str,
+        messages: List[Dict[str, str]],
+        summary: str = "",
+    ) -> None:
+        if self._redis_client is None:
+            return
+        key = self._redis_thread_key(tenant_id, user_id, thread_id)
+        summary_key = self._redis_summary_key(tenant_id, user_id, thread_id)
+        pipe = self._redis_client.pipeline()
+        pipe.delete(key)
+        if messages:
+            pipe.rpush(key, *[json.dumps(item, ensure_ascii=False) for item in messages])
+            pipe.expire(key, self.short_term_ttl)
+        if summary:
+            pipe.set(summary_key, summary, ex=self.short_term_ttl)
         pipe.execute()
 
     def _save_pg_short_term_message(self, tenant_id: str, user_id: str, thread_id: str, payload: Dict[str, str]) -> None:
@@ -496,8 +530,14 @@ class MemoryManager:
             self._redis_client.rpush(key, json.dumps(payload, ensure_ascii=False))
             self._redis_client.expire(key, self.short_term_ttl)
             self._compress_redis_thread(tenant, user_id, thread_id)
+            if self._persist_short_term_to_pg():
+                try:
+                    self._save_pg_short_term_message(tenant, user_id, thread_id, payload)
+                    self._compress_pg_thread(tenant, user_id, thread_id)
+                except Exception as exc:
+                    logger.warning("PostgreSQL 短期记忆持久化失败，Redis 写入已保留: %s", exc)
             return
-        if self.short_term_backend == "postgres" and self._postgres_dsn and psycopg:
+        if (self.short_term_backend == "postgres" or self._persist_short_term_to_pg()) and self._postgres_dsn and psycopg:
             self._save_pg_short_term_message(tenant, user_id, thread_id, payload)
             self._compress_pg_thread(tenant, user_id, thread_id)
             return
@@ -530,8 +570,16 @@ class MemoryManager:
         tenant = tenant_id or self.default_tenant_id
         if self.short_term_backend == "redis" and self._redis_client is not None:
             key = self._redis_summary_key(tenant, user_id, thread_id)
-            return self._redis_client.get(key) or ""
-        if self.short_term_backend == "postgres" and self._postgres_dsn and psycopg:
+            summary = self._redis_client.get(key) or ""
+            if summary:
+                return summary
+            if self._persist_short_term_to_pg():
+                summary = self._get_pg_short_term_summary(tenant, user_id, thread_id)
+                if summary:
+                    self._redis_client.set(key, summary, ex=self.short_term_ttl)
+                return summary
+            return ""
+        if (self.short_term_backend == "postgres" or self._persist_short_term_to_pg()) and self._postgres_dsn and psycopg:
             return self._get_pg_short_term_summary(tenant, user_id, thread_id)
         if self._redis_client is None:
             messages = self.short_term.get_messages(thread_id, include_summary=True, last_n=0)
@@ -552,15 +600,24 @@ class MemoryManager:
         if self.short_term_backend == "redis" and self._redis_client is not None:
             key = self._redis_thread_key(tenant, user_id, thread_id)
             raw = self._redis_client.lrange(key, 0, -1) or []
+            if raw:
+                items = [json.loads(item) for item in raw]
+            elif self._persist_short_term_to_pg():
+                items = self._get_pg_short_term_messages(tenant, user_id, thread_id)
+                summary = self._get_pg_short_term_summary(tenant, user_id, thread_id)
+                if items or summary:
+                    self._backfill_redis_thread(tenant, user_id, thread_id, items, summary)
+            else:
+                items = []
             if last_n:
-                raw = raw[-last_n:]
-            messages = [self._deserialize_message(json.loads(item)) for item in raw]
+                items = items[-last_n:]
+            messages = [self._deserialize_message(item) for item in items]
             if include_summary:
                 summary = self.get_short_term_summary(thread_id, user_id=user_id, tenant_id=tenant)
                 if summary:
                     return [SystemMessage(content=f"历史对话摘要：{summary}"), *messages]
             return messages
-        if self.short_term_backend == "postgres" and self._postgres_dsn and psycopg:
+        if (self.short_term_backend == "postgres" or self._persist_short_term_to_pg()) and self._postgres_dsn and psycopg:
             raw = self._get_pg_short_term_messages(tenant, user_id, thread_id)
             if last_n:
                 raw = raw[-last_n:]
@@ -581,11 +638,18 @@ class MemoryManager:
         tenant_id: Optional[str] = None,
     ) -> bool:
         tenant = tenant_id or self.default_tenant_id
-        if self.short_term_backend == "postgres" and self._postgres_dsn and psycopg:
-            return len(self._get_pg_short_term_messages(tenant, user_id, thread_id)) == 0
         if self.short_term_backend == "redis" and self._redis_client is not None:
             key = self._redis_thread_key(tenant, user_id, thread_id)
-            return int(self._redis_client.llen(key) or 0) == 0
+            if int(self._redis_client.llen(key) or 0) > 0:
+                return False
+            summary_key = self._redis_summary_key(tenant, user_id, thread_id)
+            if self._redis_client.get(summary_key):
+                return False
+            if self._persist_short_term_to_pg():
+                return len(self._get_pg_short_term_messages(tenant, user_id, thread_id)) == 0
+            return True
+        if (self.short_term_backend == "postgres" or self._persist_short_term_to_pg()) and self._postgres_dsn and psycopg:
+            return len(self._get_pg_short_term_messages(tenant, user_id, thread_id)) == 0
         return len(self.short_term.get_messages(thread_id, include_summary=False)) == 0
 
     def mark_injection_skipped(
@@ -630,7 +694,7 @@ class MemoryManager:
             summary_keys = self._redis_client.keys(f"ma:short:summary:*:*:{thread_id}")
             if summary_keys:
                 self._redis_client.delete(*summary_keys)
-        if self.short_term_backend == "postgres" and self._postgres_dsn and psycopg:
+        if (self.short_term_backend == "postgres" or self._persist_short_term_to_pg()) and self._postgres_dsn and psycopg:
             with psycopg.connect(self._postgres_dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM short_term_messages WHERE thread_id = %s", (thread_id,))
@@ -644,7 +708,7 @@ class MemoryManager:
             threads = {item.rsplit(":", 1)[-1] for item in keys if "summary" not in item}
             if threads:
                 return sorted(threads)
-        if self.short_term_backend == "postgres" and self._postgres_dsn and psycopg:
+        if (self.short_term_backend == "postgres" or self._persist_short_term_to_pg()) and self._postgres_dsn and psycopg:
             with psycopg.connect(self._postgres_dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT DISTINCT thread_id FROM short_term_messages")
@@ -1438,7 +1502,7 @@ class MemoryManager:
                 keys.extend(self._redis_client.keys(f"ma:short:summary:{tenant}:{user_id}:*"))
                 if keys:
                     self._redis_client.delete(*keys)
-            if self.short_term_backend == "postgres" and self._postgres_dsn and psycopg:
+            if (self.short_term_backend == "postgres" or self._persist_short_term_to_pg()) and self._postgres_dsn and psycopg:
                 with psycopg.connect(self._postgres_dsn) as conn:
                     with conn.cursor() as cur:
                         cur.execute(
@@ -1471,6 +1535,7 @@ class MemoryManager:
             "short_term": {
                 "active_threads": active_threads,
                 "backend": self.short_term_backend,
+                "persist_backend": self.short_term_persist_backend,
             },
             "semantic": {
                 "namespaces": [] if self.long_term_backend == "postgres" else self.semantic.list_namespaces(user_id),
@@ -1484,6 +1549,7 @@ class MemoryManager:
             },
             "modes": {
                 "short_term": self.short_term_backend,
+                "short_term_persist": self.short_term_persist_backend,
                 "long_term": self.long_term_backend,
                 "long_term_scope": self.long_term_scope,
                 "save_conversation_task": self.save_conversation_task,

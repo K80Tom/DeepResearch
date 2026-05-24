@@ -27,6 +27,7 @@ class AppConfig:
     short_term_max_messages: int
     short_term_summary_threshold: int
     short_term_backend: str
+    short_term_persist_backend: str
     long_term_backend: str
     long_term_scope: str
     save_conversation_task: bool
@@ -92,6 +93,9 @@ class AppConfig:
             data, "short_term_summary_threshold", "SHORT_TERM_SUMMARY_THRESHOLD", 20
         )
         short_term_backend = AppConfig._resolve_str(data, "short_term_backend", "SHORT_TERM_BACKEND", "postgres").lower()
+        short_term_persist_backend = AppConfig._resolve_str(
+            data, "short_term_persist_backend", "SHORT_TERM_PERSIST_BACKEND", "postgres"
+        ).lower()
         long_term_backend = AppConfig._resolve_str(data, "long_term_backend", "LONG_TERM_BACKEND", "postgres").lower()
         long_term_scope = AppConfig._resolve_str(data, "long_term_scope", "LONG_TERM_SCOPE", "user").lower()
         save_conversation_task = AppConfig._resolve_bool(data, "save_conversation_task", "SAVE_CONVERSATION_TASK", False)
@@ -117,6 +121,7 @@ class AppConfig:
             short_term_max_messages=short_term_max_messages,
             short_term_summary_threshold=short_term_summary_threshold,
             short_term_backend=short_term_backend,
+            short_term_persist_backend=short_term_persist_backend,
             long_term_backend=long_term_backend,
             long_term_scope=long_term_scope,
             save_conversation_task=save_conversation_task,
@@ -148,6 +153,9 @@ class AppConfig:
             data, "short_term_summary_threshold", "SHORT_TERM_SUMMARY_THRESHOLD", 20
         )
         short_term_backend = AppConfig._resolve_str(data, "short_term_backend", "SHORT_TERM_BACKEND", "postgres").lower()
+        short_term_persist_backend = AppConfig._resolve_str(
+            data, "short_term_persist_backend", "SHORT_TERM_PERSIST_BACKEND", "postgres"
+        ).lower()
         long_term_backend = AppConfig._resolve_str(data, "long_term_backend", "LONG_TERM_BACKEND", "postgres").lower()
         long_term_scope = AppConfig._resolve_str(data, "long_term_scope", "LONG_TERM_SCOPE", "user").lower()
         save_conversation_task = AppConfig._resolve_bool(data, "save_conversation_task", "SAVE_CONVERSATION_TASK", False)
@@ -173,6 +181,7 @@ class AppConfig:
             short_term_max_messages=short_term_max_messages,
             short_term_summary_threshold=short_term_summary_threshold,
             short_term_backend=short_term_backend,
+            short_term_persist_backend=short_term_persist_backend,
             long_term_backend=long_term_backend,
             long_term_scope=long_term_scope,
             save_conversation_task=save_conversation_task,
